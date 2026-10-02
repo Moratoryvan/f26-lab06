@@ -11,10 +11,42 @@ Keep it short and specific. Point at methods, call sites, and error text.
 
 ### Prediction (write this before you run the build, and you can deliberate with your agent)
 
-**Will the consumer, untouched, still compile and pass?** Yes or no.
+**Will the consumer, untouched, still compile and pass?** Yes.
 
-**Why.** What does the compiler do with the consumer's existing call sites once
-the new overload exists?
+**Why.** Overload resolution happens at compile time, and the first thing the
+compiler does is discard candidates whose arity does not match the call. Both
+call sites in `consumer/` pass four arguments:
+
+- `FrontDesk.bookWalkIn` → `api.createBooking(roomId, startMinute, endMinute, null)`
+  (`FrontDesk.java:27`)
+- `FrontDesk.joinWaitlist` → `api.createBooking(roomId, startMinute, endMinute, guestName)`
+  (`FrontDesk.java:33`)
+
+The new overload `createBooking(String, long, long, String waitlistKey, String notes)`
+takes five, so it is never even a candidate for those calls. Each four-argument
+call still has exactly one applicable method, the original one, so there is no
+ambiguity to report. That matters especially for `bookWalkIn`, which passes the
+bare literal `null`: `null` is only ambiguous when two *same-arity* overloads
+differ in a reference-typed parameter, and nothing of that shape is being
+added.
+
+`FrontDeskTest` goes through `FrontDesk`, never through `createBooking`
+directly, and it constructs `new InMemoryBookingService()` rather than
+implementing `BookingApi` itself, so adding a method to the interface cannot
+leave an abstract method unimplemented in `consumer/`. I will still add the
+overload as a `default` method on `BookingApi` (delegating to the four-argument
+form and attaching the notes) so that any *other* implementor of the interface
+is also unaffected; the `api/` module overrides it in `InMemoryBookingService`.
+
+`Booking.getNotes()` is a new public getter on a final class with a
+package-private constructor. No one outside `api/` can construct a `Booking`
+or subclass it, so a new accessor cannot collide with anything the consumer
+wrote. Existing bookings created through the four-argument path will report
+`null` notes, and the consumer never asks for notes, so behaviour of every
+sentence in the existing javadoc is unchanged.
+
+Expected build: `api` compiles and its tests pass, `consumer` compiles with
+no changes and `FrontDeskTest` passes, with zero warnings about `createBooking`.
 
 ### What happened
 
