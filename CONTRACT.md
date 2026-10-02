@@ -214,16 +214,73 @@ loudly than a changed behaviour would.
 
 ### Step 2: the deprecation path
 
-**What you added.** The signatures that came back, and what they delegate to.
+**What you added.** Both positional signatures came back on `BookingApi` as
+`@Deprecated default` methods. Neither holds any logic; each builds a
+`BookingRequest` and calls the one real method:
 
-**The warnings.** Paste one deprecation warning line from the build log (from
-a `mvn -B clean test` run, since a rerun with nothing to compile prints none).
+```java
+@Deprecated
+default Booking createBooking(String roomId, long startMinute, long endMinute,
+                              String waitlistKey) {
+    return createBooking(new BookingRequest(roomId, startMinute, endMinute, waitlistKey, null));
+}
 
-**What the deprecation path resolves.** Who can now build that could not build
-during step 1, and who is on which schedule.
+@Deprecated
+default Booking createBooking(String roomId, long startMinute, long endMinute,
+                              String waitlistKey, String notes) {
+    return createBooking(new BookingRequest(roomId, startMinute, endMinute, waitlistKey, notes));
+}
+```
 
-**What the warnings accomplish that a README note would not.** Be concrete
-about where the warning shows up and who sees it without looking for it.
+`InMemoryBookingService` implements only `createBooking(BookingRequest)`; the
+deprecated forms reach it through the default methods. The `@deprecated`
+javadoc tag on each names the replacement and the exact equivalent call.
+
+**The warnings.** From `mvn -B clean test`, the only change in the output
+between step 1 and step 2 is that the two `[ERROR]` lines on `FrontDesk.java`
+became two `[WARNING]` lines at the same coordinates, and the consumer's
+`testCompile` and `surefire:test` phases, which never ran in step 1, now run
+and pass:
+
+```
+[INFO] --- compiler:3.13.0:compile (default-compile) @ lab06-consumer ---
+[INFO] Compiling 1 source file with javac [debug deprecation release 21] to target/classes
+[WARNING] .../consumer/src/main/java/edu/cmu/cs214/frontdesk/FrontDesk.java:[27,19] createBooking(java.lang.String,long,long,java.lang.String) in edu.cmu.cs214.booking.BookingApi has been deprecated
+[WARNING] .../consumer/src/main/java/edu/cmu/cs214/frontdesk/FrontDesk.java:[33,19] createBooking(java.lang.String,long,long,java.lang.String) in edu.cmu.cs214.booking.BookingApi has been deprecated
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- in edu.cmu.cs214.frontdesk.FrontDeskTest
+[INFO] lab06-api .......................................... SUCCESS
+[INFO] lab06-consumer ..................................... SUCCESS
+[INFO] BUILD SUCCESS
+```
+
+`api` printed no warnings, because nothing in `api/` (including its tests)
+calls the deprecated forms any more. A rerun of `mvn -B test` without `clean`
+printed neither warning: javac saw nothing to recompile, so the deprecation
+check never ran. The warning is emitted at compile time, on the caller's
+compile, and only when the caller actually compiles.
+
+**What the deprecation path resolves.** The front desk team can build again
+without changing a line, which they could not during step 1. Both parties
+are now on separate schedules: I shipped the new surface today, and they
+migrate on their own timetable, under a visible, line-numbered reminder on
+every clean build. The actual removal of the old overloads is a second,
+later breaking change that waits until the warning count in their module is
+zero. Step 1 was a one-sided change that forced the consumer to move at my
+pace or stop building; step 2 lets each side move at its own pace with the
+compiler keeping score.
+
+**What the warnings accomplish that a README note would not.** A README note
+is pull: it is read only by someone who opens the API's repo, on the day
+they happen to open it, and the consumer team has not read my messages, let
+alone my README. The warning is push: it shows up in the front desk team's
+own build log, in their own module, at `FrontDesk.java:27` and `:33`, with
+the exact method they are calling, every time they compile, without anyone
+on their side having to look for it. The same text appears as a strikethrough
+and hover in their IDE the moment they open the file. It also carries the
+replacement, because the `@deprecated` javadoc tag is attached to the symbol
+they are already hovering over, and it can be turned into a hard gate on
+their side (`-Werror`, or a lint rule) when they decide they are ready. None
+of that is possible for prose in a file they never open.
 
 ---
 
