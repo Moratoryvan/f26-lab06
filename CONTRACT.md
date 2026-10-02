@@ -50,12 +50,56 @@ no changes and `FrontDeskTest` passes, with zero warnings about `createBooking`.
 
 ### What happened
 
-**The result.** What the build printed for each module.
+**The result.** `mvn -B clean test` from the repo root, consumer untouched
+(`git status --porcelain consumer/` prints nothing). Both modules green, no
+warnings of any kind in the log:
 
-**If your prediction was wrong,** say what you missed.
+```
+[INFO] --- compiler:3.13.0:compile (default-compile) @ lab06-api ---
+[INFO] Compiling 4 source files with javac [debug deprecation release 21] to target/classes
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- in edu.cmu.cs214.booking.InMemoryBookingServiceTest
+[INFO] --- compiler:3.13.0:compile (default-compile) @ lab06-consumer ---
+[INFO] Compiling 1 source file with javac [debug deprecation release 21] to target/classes
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- in edu.cmu.cs214.frontdesk.FrontDeskTest
+[INFO] lab06-api .......................................... SUCCESS
+[INFO] lab06-consumer ..................................... SUCCESS
+[INFO] BUILD SUCCESS
+```
 
-**Is an additive change always safe in Java?** One case where adding something
-to an API still breaks a caller, if you can name one.
+(After adding one api-side test for the new overload, the api line reads
+`Tests run: 6`; the consumer numbers are unchanged.)
+
+**If your prediction was wrong,** nothing to report. The prediction was that
+arity would filter the new five-argument method out of every consumer call
+before the compiler even considered types, so the two call sites at
+`FrontDesk.java:27` and `FrontDesk.java:33` would resolve exactly as before.
+The consumer compiled without a diagnostic and all seven `FrontDeskTest`
+cases passed, which is what that reasoning predicts. Note what the green
+consumer build does *not* prove: `FrontDeskTest` never calls the new overload
+or `getNotes()`, so it is evidence that the old contract survived, not that the
+new method works. That is why the new test lives in `api/`.
+
+**Is an additive change always safe in Java?** No. Three cases, all of which
+leave the producer's own module compiling:
+
+1. *Same-arity overload with a different reference type.* Had I added
+   `createBooking(String, long, long, Integer partySize)` instead, the call
+   `api.createBooking(roomId, startMinute, endMinute, null)` at
+   `FrontDesk.java:27` would have two applicable candidates, neither more
+   specific than the other, and `javac` reports
+   `error: reference to createBooking is ambiguous`. The consumer goes red at
+   compile time purely because of a literal `null` that used to be fine.
+2. *A new abstract method on an interface.* If `createBooking(..., notes)`
+   were declared abstract rather than `default`, every class outside `api/`
+   that `implements BookingApi` (a test fake, a logging decorator) would fail
+   with `is not abstract and does not override abstract method`. The
+   consumer here happens not to implement the interface, so this one would
+   not have bitten, but that is luck, not safety.
+3. *A new enum constant.* Adding `BookingStatus.NO_SHOW` compiles everywhere,
+   but a caller's `switch` over the status that was exhaustive yesterday now
+   has an unhandled case. With a switch *expression* that is a compile error
+   in the consumer; with a switch *statement* it is a silent fall-through at
+   run time. Additive at the source, breaking at the call site.
 
 ---
 
