@@ -290,27 +290,134 @@ Not coded. One misuse, one redesign, one cost. Discuss it with your TA.
 
 ### The misuse
 
-**What is easy to get wrong.** One specific thing about the API surface.
+**What is easy to get wrong.** The `waitlistKey` parameter is two things at
+once: a *mode switch* (null means "decline on conflict", non-null means
+"queue on conflict") and a *payload* (the opaque string handed back on
+`getWaitlistKey()`). The contract hides a control-flow decision inside the
+nullness of a data field. Nothing in the type `String` says that, and the
+compiler cannot tell a key from a name from a note from an accidental null.
 
-**The call site.** File and line in `consumer/`, with the call. Show the
-code that a reader cannot understand without opening the javadoc, or that a
-caller could get wrong with the compiler still happy.
+**The call site.** `consumer/src/main/java/edu/cmu/cs214/frontdesk/FrontDesk.java:33`,
+in `joinWaitlist`:
 
-**What goes wrong when it happens.** Silent bad behavior, wrong data, a crash
-somewhere far away?
+```java
+public Booking joinWaitlist(String roomId, long startMinute, long endMinute,
+                            String guestName) {
+    return api.createBooking(roomId, startMinute, endMinute, guestName);
+}
+```
+
+A reader sees a guest's name being passed to a booking call. Nothing on the
+line says "and this is also the thing that decides whether we waitlist".
+Compare it with `FrontDesk.java:27`, two methods up, which passes `null` in
+the same position. Without the javadoc you cannot tell that the only
+difference between "book now or fail" and "book now or queue" is that fourth
+argument's nullness.
+
+The same shape survived my own redesign in Milestone 2, and got worse.
+`new BookingRequest("Oak", 570, 630, null, "Ramirez")` and
+`new BookingRequest("Oak", 570, 630, "Ramirez", null)` both compile. They
+differ only in which of two adjacent `String` slots is null, and they do
+opposite things on a busy room.
+
+**What goes wrong when it happens.** Silent wrong behaviour, not a crash. If
+the desk's form lets `guestName` be empty and the caller passes `null`
+through `joinWaitlist`, the API treats it as "decline waitlisting": no
+booking is created, the method returns `null`, and `joinWaitlist` hands
+back `null` to a caller that believes the guest is now queued. The guest
+walks away thinking they are on the list; the schedule shows nothing. The
+`null` return is the same `null` that `bookWalkIn` legitimately returns, so
+even a null check cannot distinguish "room was busy and we declined" from
+"room was busy and we forgot the key". The compiler, the api tests, and
+`FrontDeskTest` are all happy, because every one of them only ever passes a
+non-null name.
 
 ### The redesign
 
-**The proposal.** Types, enums, factories, or whatever you are proposing. Show
-the new signature and the new call site.
+**The proposal.** Separate the decision from the data. Make "what to do on
+conflict" its own type with exactly two states, and make the key impossible
+to supply without choosing the queueing state:
 
-**Why the mistake is now hard or impossible to make.** Point at the mechanism,
-such as the compiler, a validating constructor, or an exhaustive switch.
+```java
+public sealed interface ConflictPolicy {
+    /** On conflict, create nothing and return null. */
+    static ConflictPolicy decline() { return Decline.INSTANCE; }
+
+    /** On conflict, create a WAITLISTED booking carrying {@code key}. */
+    static ConflictPolicy waitlist(String key) {
+        if (key == null) throw new IllegalArgumentException("waitlist key must not be null");
+        return new Waitlist(key);
+    }
+
+    record Decline() implements ConflictPolicy { static final Decline INSTANCE = new Decline(); }
+    record Waitlist(String key) implements ConflictPolicy { }
+}
+
+public record BookingRequest(String roomId, long startMinute, long endMinute,
+                             ConflictPolicy onConflict, String notes) { }
+```
+
+The new call sites in `FrontDesk`:
+
+```java
+// FrontDesk.java:27, bookWalkIn
+return api.createBooking(new BookingRequest(roomId, startMinute, endMinute,
+        ConflictPolicy.decline(), null));
+
+// FrontDesk.java:33, joinWaitlist
+return api.createBooking(new BookingRequest(roomId, startMinute, endMinute,
+        ConflictPolicy.waitlist(guestName), null));
+```
+
+Each line now says, in its own words, what happens when the room is busy.
+
+**Why the mistake is now hard or impossible to make.** Three mechanisms, in
+the order they fire:
+
+1. *The compiler.* `onConflict` is a `ConflictPolicy`, not a `String`. You
+   cannot pass a guest name, a note, or a bare `null` literal where the
+   policy goes without a type error. The adjacent-`String`-slots swap from
+   Milestone 2 is gone because the two slots no longer share a type.
+2. *The validating factory.* `ConflictPolicy.waitlist(null)` throws at the
+   call site, in `joinWaitlist`, with a message naming the key. The bad
+   `null` can no longer travel into the API and quietly turn into
+   `decline()`. The failure moves from "silent wrong state far away" to
+   "loud, local, and attributable".
+3. *The exhaustive switch.* Inside `InMemoryBookingService` the conflict
+   branch becomes a `switch` over a sealed type. Both cases must be handled
+   or the service does not compile, and a third policy added later (say,
+   `Overbook`) forces every implementor to decide what it means rather than
+   falling into a default.
+
+A `null` passed as the whole `onConflict` argument is still possible, but it
+is now a single obvious hole that `createBooking` can reject with
+`IllegalArgumentException`, the same way it already rejects a null room id,
+rather than a documented meaning.
 
 ### One tradeoff
 
-**What it costs.** Something real, such as caller ceremony, migration burden
-against the deprecation path you just built, or more types for a newcomer to
-learn. "No real downside" does not count.
+**What it costs.** Migration burden on top of the deprecation path I just
+built. Today the consumer gets two warnings and keeps working. Under this
+redesign the deprecated four- and five-argument overloads can still delegate
+(`waitlistKey == null ? decline() : waitlist(waitlistKey)`), so the consumer
+keeps compiling, but the `BookingRequest` record I shipped in Milestone 2
+changes shape a second time. Anyone who migrated to it promptly, which is
+exactly the behaviour the warnings asked for, is now punished with a second
+migration, and a `BookingRequest` constructor that took two `String`s has to
+be deprecated and kept alongside the new one. That is three overloads of
+`createBooking` and two shapes of `BookingRequest` living in the API at once,
+all so that one `null` cannot be misread. It is also two more public types
+(`ConflictPolicy` and its two records) for a newcomer to learn before they
+can book a room, and `ConflictPolicy.decline()` is ceremony on the common
+path where today's caller wrote `null`.
 
-**When the price is worth paying.** A condition under which it is.
+**When the price is worth paying.** When the cost of the silent failure is
+borne by someone who cannot see it. Here that is a guest who believes they
+are queued and is not, and a desk clerk whose code and tests both look
+correct. If the consumer were a throwaway script run by its own author, the
+javadoc would be enough and the extra types would be noise. It is worth
+paying when the API has callers you do not control, who do not read your
+messages, and whose mistake shows up as a wrong schedule a day later rather
+than a stack trace now. That is precisely the situation this lab set up, and
+precisely the situation in which the compiler is the only reviewer who is
+guaranteed to show up.
