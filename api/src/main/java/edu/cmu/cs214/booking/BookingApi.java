@@ -20,77 +20,41 @@ import java.util.List;
 public interface BookingApi {
 
     /**
-     * Books a room for the half-open range {@code [startMinute, endMinute)}.
+     * Books the room named in {@code request} for the half-open range
+     * {@code [request.startMinute(), request.endMinute())}.
      *
      * <p>If no CONFIRMED booking on that room overlaps the range, the returned
      * booking is CONFIRMED and holds the room.
      *
      * <p>If some CONFIRMED booking does overlap, what happens next is decided
-     * by {@code waitlistKey}:
+     * by {@code request.waitlistKey()}:
      * <ul>
-     *   <li>{@code waitlistKey} null means do not waitlist on conflict. No
-     *       booking is created and the method returns null. Nothing about the
-     *       room's schedule changes.</li>
-     *   <li>{@code waitlistKey} non-null means waitlist on conflict. A booking
-     *       is created with status WAITLISTED, carrying the key, and returned.
-     *       It does not hold the room. It becomes CONFIRMED only if it is later
-     *       promoted, which happens when a conflicting booking is cancelled
-     *       with notification (see
-     *       {@link #cancelBooking(long, boolean)}).</li>
+     *   <li>null means do not waitlist on conflict. No booking is created and
+     *       the method returns null. Nothing about the room's schedule
+     *       changes.</li>
+     *   <li>non-null means waitlist on conflict. A booking is created with
+     *       status WAITLISTED, carrying the key, and returned. It does not
+     *       hold the room. It becomes CONFIRMED only if it is later promoted,
+     *       which happens when a conflicting booking is cancelled with
+     *       notification (see {@link #cancelBooking(long, boolean)}).</li>
      * </ul>
      *
      * <p>The key itself is an opaque caller-supplied string. This API stores it
      * and hands it back on {@link Booking#getWaitlistKey()}; it never
      * interprets it. The key has no effect when there is no conflict: the
-     * booking is CONFIRMED and the key is simply retained.
+     * booking is CONFIRMED and the key is simply retained. The same holds for
+     * {@code request.notes()}, handed back on {@link Booking#getNotes()}.
      *
      * <p>Ids are assigned by the implementation, are unique, and increase in
      * creation order.
      *
-     * @param roomId      the room to book, non-null
-     * @param startMinute first minute of the booking, inclusive
-     * @param endMinute   first minute after the booking, exclusive; must be
-     *                    greater than {@code startMinute}
-     * @param waitlistKey caller's waitlist key, or null to decline waitlisting
+     * @param request what to book, non-null
      * @return the CONFIRMED booking, the WAITLISTED booking, or null when the
      *         range conflicts and no waitlist key was given
-     * @throws IllegalArgumentException if {@code roomId} is null or
-     *         {@code endMinute} is not greater than {@code startMinute}
+     * @throws IllegalArgumentException if {@code request} or its room id is
+     *         null, or its end minute is not greater than its start minute
      */
-    Booking createBooking(String roomId, long startMinute, long endMinute,
-                          String waitlistKey);
-
-    /**
-     * Books a room exactly as {@link #createBooking(String, long, long, String)}
-     * does, and additionally attaches free-text notes to the booking.
-     *
-     * <p>Every rule of the four-argument form applies unchanged: conflict
-     * detection, waitlisting, the null return, id assignment, and the
-     * exceptions. The notes are opaque to this API. They are stored and handed
-     * back on {@link Booking#getNotes()}, and they never influence whether or
-     * how the booking is made. Bookings created through the four-argument form
-     * report null notes.
-     *
-     * <p>This is a default method so that existing implementations of this
-     * interface keep compiling. The default delegates to the four-argument
-     * form and discards the notes; implementations that can store notes
-     * should override it.
-     *
-     * @param roomId      the room to book, non-null
-     * @param startMinute first minute of the booking, inclusive
-     * @param endMinute   first minute after the booking, exclusive; must be
-     *                    greater than {@code startMinute}
-     * @param waitlistKey caller's waitlist key, or null to decline waitlisting
-     * @param notes       free-text notes to attach, or null for none
-     * @return the CONFIRMED booking, the WAITLISTED booking, or null when the
-     *         range conflicts and no waitlist key was given
-     * @throws IllegalArgumentException if {@code roomId} is null or
-     *         {@code endMinute} is not greater than {@code startMinute}
-     */
-    default Booking createBooking(String roomId, long startMinute, long endMinute,
-                                  String waitlistKey, String notes) {
-        return createBooking(roomId, startMinute, endMinute, waitlistKey);
-    }
+    Booking createBooking(BookingRequest request);
 
     /**
      * Returns every non-cancelled booking for one room, ordered by start minute.

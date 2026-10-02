@@ -162,11 +162,55 @@ by an assertion.
 
 ### Step 1: after the fold
 
-**What the build printed.** Paste it for each module, including file and
-line for anything that failed.
+**What the build printed.** `mvn -B clean test`, consumer untouched. The new
+surface is `BookingRequest` (a record) and `Booking createBooking(BookingRequest)`;
+both positional overloads are gone. All six api tests rewritten to the new call.
 
-**Which module's tests ran, and which did not.** And what that tells you about
-who can detect a contract break.
+`lab06-api`:
+
+```
+[INFO] Compiling 5 source files with javac [debug deprecation release 21] to target/classes
+[INFO] Compiling 1 source file with javac [debug deprecation release 21] to target/test-classes
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- in edu.cmu.cs214.booking.InMemoryBookingServiceTest
+[INFO] lab06-api .......................................... SUCCESS [  0.701 s]
+```
+
+`lab06-consumer`:
+
+```
+[INFO] Compiling 1 source file with javac [debug deprecation release 21] to target/classes
+[ERROR] COMPILATION ERROR :
+[ERROR] .../consumer/src/main/java/edu/cmu/cs214/frontdesk/FrontDesk.java:[27,19] method createBooking in interface edu.cmu.cs214.booking.BookingApi cannot be applied to given types;
+[ERROR]   required: edu.cmu.cs214.booking.BookingRequest
+[ERROR]   found:    java.lang.String,long,long,<nulltype>
+[ERROR]   reason: actual and formal argument lists differ in length
+[ERROR] .../consumer/src/main/java/edu/cmu/cs214/frontdesk/FrontDesk.java:[33,19] method createBooking in interface edu.cmu.cs214.booking.BookingApi cannot be applied to given types;
+[ERROR]   required: edu.cmu.cs214.booking.BookingRequest
+[ERROR]   found:    java.lang.String,long,long,java.lang.String
+[ERROR]   reason: actual and formal argument lists differ in length
+[INFO] lab06-consumer ..................................... FAILURE [  0.035 s]
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project lab06-consumer
+```
+
+Exactly the two call sites named in the prediction, both in the main compile
+phase, with the error text predicted. Nothing reported in `FrontDeskTest.java`.
+
+**Which module's tests ran, and which did not.** `InMemoryBookingServiceTest`
+ran and passed, six of six. `FrontDeskTest` did not run and was not even
+compiled: the failure is in `compile (default-compile)`, which precedes
+`testCompile` and `surefire:test`, so Maven never got there.
+
+What that says about detection: the producer's own suite is green while the
+producer has just broken its contract. That is not a weak test suite, it is a
+structural fact. I rewrote the tests in the same change that removed the
+method, so they test the new contract and are blind to the old one by
+construction. The only code in the build that can notice the break is code
+that still depends on the old promise, and the only such code is in a module
+I do not own. A contract break is detected by the *other* side of the
+contract. The consumer's module is the gate, and here the gate is the type
+checker, not an assertion, because a removed method fails earlier and more
+loudly than a changed behaviour would.
 
 ### Step 2: the deprecation path
 
