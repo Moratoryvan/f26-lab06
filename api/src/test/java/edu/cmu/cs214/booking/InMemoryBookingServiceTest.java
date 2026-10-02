@@ -59,4 +59,15 @@ class InMemoryBookingServiceTest {
         assertEquals(1, schedule.size());
         assertEquals(queued.getId(), schedule.get(0).getId());
     }
+
+    @Test
+    void notesOverloadStoresNotesAndKeepsFourArgumentBehaviour() {
+        Booking withNotes = api.createBooking("R1", 540, 600, null, "projector please");
+        Booking without = api.createBooking("R1", 600, 660, null);
+
+        assertEquals("projector please", withNotes.getNotes());
+        assertEquals(BookingStatus.CONFIRMED, withNotes.getStatus());
+        assertNull(without.getNotes());
+        assertNull(api.createBooking("R1", 570, 630, null, "still conflicts"));
+    }
 }

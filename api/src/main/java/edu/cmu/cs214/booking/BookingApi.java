@@ -61,6 +61,38 @@ public interface BookingApi {
                           String waitlistKey);
 
     /**
+     * Books a room exactly as {@link #createBooking(String, long, long, String)}
+     * does, and additionally attaches free-text notes to the booking.
+     *
+     * <p>Every rule of the four-argument form applies unchanged: conflict
+     * detection, waitlisting, the null return, id assignment, and the
+     * exceptions. The notes are opaque to this API. They are stored and handed
+     * back on {@link Booking#getNotes()}, and they never influence whether or
+     * how the booking is made. Bookings created through the four-argument form
+     * report null notes.
+     *
+     * <p>This is a default method so that existing implementations of this
+     * interface keep compiling. The default delegates to the four-argument
+     * form and discards the notes; implementations that can store notes
+     * should override it.
+     *
+     * @param roomId      the room to book, non-null
+     * @param startMinute first minute of the booking, inclusive
+     * @param endMinute   first minute after the booking, exclusive; must be
+     *                    greater than {@code startMinute}
+     * @param waitlistKey caller's waitlist key, or null to decline waitlisting
+     * @param notes       free-text notes to attach, or null for none
+     * @return the CONFIRMED booking, the WAITLISTED booking, or null when the
+     *         range conflicts and no waitlist key was given
+     * @throws IllegalArgumentException if {@code roomId} is null or
+     *         {@code endMinute} is not greater than {@code startMinute}
+     */
+    default Booking createBooking(String roomId, long startMinute, long endMinute,
+                                  String waitlistKey, String notes) {
+        return createBooking(roomId, startMinute, endMinute, waitlistKey);
+    }
+
+    /**
      * Returns every non-cancelled booking for one room, ordered by start minute.
      *
      * <p>Both CONFIRMED and WAITLISTED bookings are included; CANCELLED
