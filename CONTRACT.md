@@ -107,13 +107,58 @@ leave the producer's own module compiling:
 
 ### Prediction (write this before you run the build)
 
-**Will the untouched consumer still compile and pass?** Yes or no, and if no,
-which module goes red and whether at compile time or test time.
+**Will the untouched consumer still compile and pass?** No. `consumer` goes
+red at **compile time**, in the `compiler:compile` phase of `lab06-consumer`,
+before `FrontDeskTest` is ever compiled or run. Removing the positional
+`createBooking` overloads deletes a method the consumer's bytecode-to-be
+names directly; there is nothing for the compiler to resolve a four-argument
+call to, so `javac` reports something like
+`error: method createBooking in interface BookingApi cannot be applied to given types`
+(or `no suitable method found for createBooking(String,long,long,<null>)`),
+with `required: BookingRequest` and `found: String,long,long,<null>`.
 
-**Where.** Name the call sites you expect to be affected, if any.
+This is the mirror image of Milestone 1. Adding a method left every existing
+call with exactly one applicable candidate. Removing one leaves the existing
+calls with zero. The javadoc on `BookingApi` says callers are entitled to
+everything stated there; the four-argument `createBooking` is stated there, so
+by the contract's own definition this is a breaking change, and the build is
+about to say so on the consumer's behalf.
 
-**What about the tests in `api/`, after you update them?** And whether their
-result is evidence about the consumer.
+`api` itself will stay green (once its tests are updated, see below), because
+`api` only compiles against itself. Maven builds `api` first, so the reactor
+will show `lab06-api SUCCESS`, then `lab06-consumer FAILURE`, and the build
+stops there.
+
+**Where.** Two call sites in `FrontDesk.java`, both in `consumer/src/main`:
+
+- `FrontDesk.java:27`, `bookWalkIn`: `api.createBooking(roomId, startMinute, endMinute, null)`
+- `FrontDesk.java:33`, `joinWaitlist`: `api.createBooking(roomId, startMinute, endMinute, guestName)`
+
+`FrontDeskTest.java` does not call `createBooking` directly, it goes through
+`FrontDesk`, so I do not expect any error to be reported in the test file.
+It will not be compiled at all, since `compile` fails before `testCompile`.
+`listBookings` and `cancelBooking` are untouched, so `displaySchedule`,
+`cancelAndOfferToWaitlist` and `cancelQuietly` should produce no diagnostics.
+
+**What about the tests in `api/`, after you update them?** They will pass.
+`InMemoryBookingServiceTest` calls `createBooking` at roughly nine places
+(lines 17, 25, 27, 33, 35, 43, 45, 52, 53, plus my Milestone 1 test). Each
+one is a mechanical rewrite to build a `BookingRequest` and pass it; the
+behaviour under test (conflict, waitlist, promotion, ids) does not change, so
+every assertion still holds. If I forget one call site, `api` fails at
+`testCompile` with the same "cannot be applied" error and the consumer is
+never reached, which would tell me nothing new.
+
+**Is that evidence about the consumer?** No. A green `api` module proves the
+producer can use its own new surface, and that the implementation still obeys
+the contract for callers who have *already migrated*. It says nothing about
+callers who have not. The producer's suite was edited in the same commit as
+the break, so it cannot detect the break by construction. The only thing in
+this build that can is the consumer's module, because it is the only code
+that still names the old signature. That is exactly why `FrontDeskTest` is
+called the gate in the README, and why the gate fires at compile time rather
+than at test time here: a removed method is caught by the type checker, not
+by an assertion.
 
 ### Step 1: after the fold
 
